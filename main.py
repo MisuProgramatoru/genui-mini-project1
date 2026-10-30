@@ -25,11 +25,11 @@ async def load_weather(city):
             await session.initialize()
 
             # TODO 1: Set the tool name. Find it in mcp_server.py.
-            tool_name = ""
+            tool_name = "get_weather"
             # TODO 2: Pass the selected city using the tool's parameter name.
-            arguments = {}
+            arguments = {"city":city}
             # TODO 3: Call the tool with session.call_tool(tool_name, arguments).
-            result = None
+            result = await session.call_tool(tool_name, arguments)
 
     if result is None:
         raise NotImplementedError("Complete the three TODO lines in main.py to connect weather.")

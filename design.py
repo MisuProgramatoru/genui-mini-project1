@@ -3,6 +3,17 @@ from html import escape
 
 import pandas as pd
 import streamlit as st
+from pathlib import Path
+import base64
+
+CITY_IMAGES = {
+    "Shanghai": "shanghai.png",
+    "Beijing": "beijing.png",
+    "London": "london.png",
+    "New York": "new_york.png",
+}
+
+
 
 BASELINE_PROMPT = "Create a personal workspace with tasks, quick notes, and a weather panel."
 # Optional: send this prompt and this file to an AI coding assistant.
@@ -26,6 +37,20 @@ STYLE = """
 .temperature { font-size: 52px; font-weight: 650; line-height: 1.2; }
 .weather p { margin: 12px 0; }
 .weather small { color: #405872; }
+
+.weather--photo {
+    padding: 0;
+    overflow: hidden;
+    background-size: cover;
+    background-position: center;
+}
+
+.weather--photo .weather-details {
+    padding: 24px;
+    background: rgba(237, 245, 255, 0.75);
+    -webkit-backdrop-filter: blur(1px);
+    backdrop-filter: blur(1px);
+}
 </style>
 """
 CONDITIONS = {
@@ -81,18 +106,41 @@ def render(weather, workspace, weather_message):
         if weather is None:
             st.info(weather_message or "Choose a city to load weather.")
         else:
+            card_class = "weather"
+            image_style = ""
+
+            filename = CITY_IMAGES.get(weather["city"])
+
+            if filename:
+                image_path = Path(__file__).parent / "images" / filename
+
+                try:
+                    image_data = image_path.read_bytes()
+                except OSError:
+                    pass  # Missing or unreadable image: keep the blue card.
+                else:
+                    encoded = base64.b64encode(image_data).decode("ascii")
+                    card_class = "weather weather--photo"
+                    image_style = (
+                        f' style="background-image: '
+                        f'url(data:image/png;base64,{encoded});"'
+                    )
+
             # Keep escaping data from the external API when changing this HTML.
             item = {key: escape(str(value)) for key, value in weather.items()}
             condition = CONDITIONS.get(weather.get("weather_code"), weather.get("condition", "Weather"))
             condition = escape(condition.replace("_", " ").replace("clearsky", "clear sky")
                                .replace("partlycloudy", "partly cloudy").capitalize())
             st.html(f"""
-            <section class="weather" aria-label="Weather estimate">
-              <h3>{item['city']}</h3>
-              <div class="temperature">{item['temperature']}°C</div>
-              <p>{condition}</p>
-              <p>Humidity {item['humidity']}% · Wind {item['wind_speed']} m/s</p>
-              <small>{item['kind']}<br>Time (UTC): {item['time']}</small>
+            <section class="{card_class}"{image_style}
+                     aria-label="Weather estimate">
+              <div class="weather-details">
+                <h3>{item['city']}</h3>
+                <div class="temperature">{item['temperature']}°C</div>
+                <p>{condition}</p>
+                <p>Humidity {item['humidity']}% · Wind {item['wind_speed']} m/s</p>
+                <small>{item['kind']}<br>Time (UTC): {item['time']}</small>
+              </div>
             </section>
             """)
             st.caption(f"Weather data from [{weather['source']}]({weather['source_url']}), "
