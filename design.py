@@ -13,6 +13,13 @@ CITY_IMAGES = {
     "New York": "new_york.png",
 }
 
+CITY_TIMEZONES = {
+    "Shanghai": "Asia/Shanghai",
+    "Beijing": "Asia/Shanghai",
+    "London": "Europe/London",
+    "New York": "America/New_York",
+}
+
 
 
 BASELINE_PROMPT = "Create a personal workspace with tasks, quick notes, and a weather panel."
@@ -146,4 +153,30 @@ def render(weather, workspace, weather_message):
             st.caption(f"Weather data from [{weather['source']}]({weather['source_url']}), "
                        "[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).")
         st.caption("Tries MET Norway, then Open-Meteo. Refresh may reuse a valid API cache.")
+        if weather and weather.get("hourly"):
+            with st.expander("Hourly forecast"):
+                city_timezone = CITY_TIMEZONES.get(weather["city"], "UTC")
+                now = pd.Timestamp.now(tz="UTC")
+                rows = []
+
+                for hour in weather["hourly"]:
+                    forecast_time = pd.to_datetime(hour["time"], utc=True)
+
+                    if forecast_time < now:
+                        continue
+
+                    local_time = forecast_time.tz_convert(city_timezone)
+
+                    rows.append({
+                        "Local time": local_time.strftime("%a %H:%M %Z"),
+                        "Temperature (°C)": hour["temperature"],
+                        "Wind (m/s)": hour["wind_speed"],
+                        "Precipitation (mm)": hour["precipitation_mm"],
+                    })
+
+                if rows:
+                    st.dataframe(pd.DataFrame(rows), hide_index=True)
+                else:
+                    st.info("No upcoming hourly forecasts are available.")
+
     return {"tasks": tasks.to_dict("records"), "notes": notes} if saved else None

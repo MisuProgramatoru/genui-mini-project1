@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 from mcp.server.fastmcp import FastMCP
+from datetime import datetime, timedelta, timezone
 
 app = FastMCP("Workspace Weather")
 # Try in this order. Students do not need to change the provided adapter.
@@ -35,7 +36,7 @@ def read_cache():
 
 def fetch_weather(provider, city):
     cache = read_cache()
-    key = f"{provider}:{city}"
+    key = f"v4:{provider}:{city}"
     previous = cache.get(key, {})
     if not isinstance(previous, dict):
         previous = {}
@@ -48,9 +49,21 @@ def fetch_weather(provider, city):
         if previous.get("last_modified"):
             headers["If-Modified-Since"] = previous["last_modified"]
     else:
-        params = {"latitude": latitude, "longitude": longitude, "timezone": "UTC",
-                  "forecast_days": 1, "wind_speed_unit": "ms",
-                  "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m"}
+        params = {
+            "latitude": latitude,
+            "longitude": longitude,
+            "timezone": "UTC",
+            "forecast_hours": 26,
+            "wind_speed_unit": "ms",
+            "current": (
+                "temperature_2m,relative_humidity_2m,"
+                "weather_code,wind_speed_10m"
+            ),
+            "hourly": (
+                "temperature_2m,precipitation,precipitation_probability,"
+                "wind_speed_10m,weather_code"
+            ),
+        }
     response = httpx.get(API_URLS[provider], params=params, headers=headers,
                          timeout=6, follow_redirects=True)
     if response.status_code == 304:
@@ -59,7 +72,8 @@ def fetch_weather(provider, city):
         response.raise_for_status()
         data = response.json()
         if provider == "met_no":
-            forecast = data["properties"]["timeseries"][0]
+            timeseries = data["properties"]["timeseries"]
+            forecast = timeseries[0]
             details = forecast["data"]["instant"]["details"]
             period = forecast["data"].get("next_1_hours", forecast["data"].get("next_6_hours", {}))
             weather = {"city": city, "temperature": details["air_temperature"],
@@ -67,6 +81,36 @@ def fetch_weather(provider, city):
                        "condition": period.get("summary", {}).get("symbol_code", "forecast"),
                        "time": forecast["time"], "source": "MET Norway",
                        "source_url": "https://api.met.no/", "kind": "Latest forecast"}
+            #now and end define forcast window
+            now = datetime.now(timezone.utc)
+            end = now + timedelta(hours=24)
+            hourly = []
+            #for entry in timeseries examines each forecast
+            for entry in timeseries:
+                forecast_time = datetime.fromisoformat(
+                    entry["time"].replace("Z", "+00:00")
+                )
+                next_hour = entry["data"].get("next_1_hours")
+
+                if not (now <= forecast_time < end) or next_hour is None:
+                    #continue skips entries outside that window or without an hourly period.
+                    continue
+
+                instant = entry["data"]["instant"]["details"]
+                # hourly.append(...) adds one forecast to the list.
+                hourly.append({
+                    "time": entry["time"],
+                    "temperature": instant["air_temperature"],
+                    "wind_speed": instant["wind_speed"],
+                    "precipitation_mm": next_hour.get("details", {}).get(
+                        "precipitation_amount"
+                    ),
+                    "condition": next_hour.get("summary", {}).get(
+                        "symbol_code"
+                    ),
+                })
+            #weather["hourly"] attaches that list to the result returned through MCP.
+            weather["hourly"] = hourly
         else:
             current = data["current"]
             weather = {"city": city, "temperature": current["temperature_2m"],
@@ -74,6 +118,33 @@ def fetch_weather(provider, city):
                        "weather_code": current["weather_code"], "time": current["time"] + "Z",
                        "source": "Open-Meteo", "source_url": "https://open-meteo.com/",
                        "kind": "Current weather estimate"}
+            
+            hourly_data = data["hourly"]
+            now = datetime.now(timezone.utc)
+            end = now + timedelta(hours=24)
+            hourly = []
+
+            for index, timestamp in enumerate(hourly_data["time"][:-1]):
+                forecast_time = datetime.fromisoformat(timestamp).replace(
+                    tzinfo=timezone.utc
+                )
+
+                if not (now <= forecast_time < end):
+                    continue
+
+                hourly.append({
+                    "time": forecast_time.isoformat().replace("+00:00", "Z"),
+                    "temperature": hourly_data["temperature_2m"][index],
+                    "wind_speed": hourly_data["wind_speed_10m"][index],
+                    "precipitation_mm": hourly_data["precipitation"][index + 1],
+                    "precipitation_probability": hourly_data[
+                        "precipitation_probability"
+                    ][index + 1],
+                    "weather_code": hourly_data["weather_code"][index],
+                    "condition": None,
+                })
+
+            weather["hourly"] = hourly
         if not all(isinstance(weather[field], (int, float)) and math.isfinite(weather[field])
                    for field in ["temperature", "humidity", "wind_speed"]):
             raise ValueError("The API returned invalid weather values.")
